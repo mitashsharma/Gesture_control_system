@@ -1,0 +1,251 @@
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------ *
+ *  Design tokens — pale / futuristic light theme
+ *  Kept as CSS custom properties so Tailwind's JIT never has to
+ *  regenerate utilities at runtime and theme swaps are free.
+ * ------------------------------------------------------------------ */
+@theme {
+  --color-canvas: #f5f7fc;
+  --color-canvas-2: #eef1f9;
+  --color-ink: #0c1226;
+  --color-ink-soft: #3a4360;
+  --color-ink-mute: #6b7695;
+
+  --color-cyan-brand: #06b6d4;
+  --color-cyan-glow: #22d3ee;
+  --color-violet-brand: #7c3aed;
+  --color-violet-glow: #a78bfa;
+  --color-amber-brand: #f59e0b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "SF Mono",
+    Menlo, Consolas, monospace;
+
+  --shadow-glass: 0 1px 2px rgba(15, 23, 42, 0.04),
+    0 8px 24px -12px rgba(15, 23, 42, 0.18);
+  --shadow-glow-cyan: 0 0 0 1px rgba(34, 211, 238, 0.35),
+    0 8px 30px -8px rgba(34, 211, 238, 0.45);
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --grid-line: rgba(15, 23, 42, 0.055);
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 92px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background: rgba(34, 211, 238, 0.28);
+    color: var(--color-ink);
+  }
+
+  /* Thin, cheap scrollbars for the log terminal */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 58, 237, 0.28) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: rgba(124, 58, 237, 0.25);
+    border-radius: 99px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgba(124, 58, 237, 0.6);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ *  Utilities
+ * ------------------------------------------------------------------ */
+@utility glass {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.78),
+    rgba(255, 255, 255, 0.52)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: var(--shadow-glass);
+  backdrop-filter: blur(14px) saturate(150%);
+  -webkit-backdrop-filter: blur(14px) saturate(150%);
+}
+
+/* Non-blurred variant used for cards that sit far down the page:
+   backdrop-filter is one of the most expensive things a browser can do,
+   so only the persistent chrome + hero actually pay for it. */
+@utility glass-flat {
+  background-image: linear-gradient(
+    160deg,
+    rgba(255, 255, 255, 0.92),
+    rgba(255, 255, 255, 0.74)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility gradient-text {
+  background-image: linear-gradient(
+    100deg,
+    #06b6d4 0%,
+    #22d3ee 28%,
+    #6366f1 62%,
+    #8b5cf6 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility section-offload {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 640px;
+}
+
+/* Ambient page mesh — painted once, never animated, GPU-cheap. */
+@utility ambient-mesh {
+  background-image:
+    radial-gradient(
+      58rem 40rem at 8% -10%,
+      rgba(34, 211, 238, 0.16),
+      transparent 62%
+    ),
+    radial-gradient(
+      52rem 38rem at 96% 4%,
+      rgba(139, 92, 246, 0.15),
+      transparent 60%
+    ),
+    radial-gradient(
+      46rem 34rem at 50% 108%,
+      rgba(99, 102, 241, 0.12),
+      transparent 62%
+    ),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: auto, auto, auto, 56px 56px, 56px 56px;
+}
+
+/* Keyframes are transform/opacity only → composited, no layout thrash. */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+@keyframes shimmer-x {
+  to {
+    transform: translateX(220%);
+  }
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Tooltip mounts only for the hovered cell, so it animates on insert
+   instead of keeping 25 permanently-blurred nodes in the tree. */
+@keyframes tip-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.4s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+}
+.animate-flow-dash {
+  animation: flow-dash 1.1s linear infinite;
+}
+.animate-shimmer-x {
+  animation: shimmer-x 2.6s ease-in-out infinite;
+}
+
+/* The status pill sits in the permanently-visible nav, so its sweep runs only
+   on hover — an infinite animation on fixed chrome never stops costing frames. */
+.shimmer-hover {
+  opacity: 0;
+}
+.group:hover > .shimmer-hover,
+.group:focus-visible > .shimmer-hover {
+  opacity: 0.9;
+  animation: shimmer-x 2.4s ease-in-out infinite;
+}
+.animate-caret {
+  animation: caret 1.05s step-end infinite;
+}
+.animate-tip-in {
+  animation: tip-in 0.16s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* ------------------------------------------------------------------ *
+ *  Reduced motion — one switch kills every decorative animation,
+ *  including Framer Motion (via MotionConfig) and the canvas loops.
+ * ------------------------------------------------------------------ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

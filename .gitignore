@@ -1,0 +1,20 @@
+# dependencies & build output
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+
+# tooling caches
+*.tsbuildinfo
+.verify/
+
+# generated verification artifacts (regenerate via scripts/e2e.cjs)
+screenshots/
+
+# os / editor / env
+.DS_Store
+*.log
+.env
+.env.*
