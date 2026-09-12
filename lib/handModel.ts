@@ -139,6 +139,7 @@ function chain(
 /** 21 landmarks in *local* hand space (wrist at origin, scale 1). */
 export function localLandmarks(pose: PoseId, out: Landmark[] = new Array(21)): Landmark[] {
   const def = POSE_DEFS[pose];
+  if (!def) throw new Error(`handModel: unknown pose "${String(pose)}"`);
 
   out[LM.WRIST] = { x: 0, y: 0, z: 0 };
   for (let f = 0; f < 4; f++) {
@@ -269,9 +270,13 @@ export function drawHand(
  * (swipe / scroll) are exercised too.
  */
 export function cyclePose(tSeconds: number): HandPlacement {
+  // The clock is external input: a negative or non-finite t (a frame stamped
+  // before the loop's epoch, a throttled tab, a stale rAF) must degrade to
+  // t = 0, never index the pose table out of bounds.
+  const t = Number.isFinite(tSeconds) ? Math.max(0, tSeconds) : 0;
   const CYCLE = 2.6;
-  const slot = Math.floor(tSeconds / CYCLE) % POSES.length;
-  const frac = (tSeconds % CYCLE) / CYCLE;
+  const slot = Math.floor(t / CYCLE) % POSES.length;
+  const frac = (t % CYCLE) / CYCLE;
   // Ease between poses in the last 18 % of each slot.
   const next = POSES[(slot + 1) % POSES.length];
   const blend = frac > 0.82 ? (frac - 0.82) / 0.18 : 0;
@@ -285,13 +290,13 @@ export function cyclePose(tSeconds: number): HandPlacement {
   let y = 0.62;
   if (slot === 0) x = 0.5 + 0.24 * Math.sin(sweep * Math.PI * 2);
   else if (slot === 3) y = 0.62 - 0.2 * Math.sin(sweep * Math.PI * 2);
-  else x = 0.5 + Math.sin(tSeconds * 0.7) * 0.012;
+  else x = 0.5 + Math.sin(t * 0.7) * 0.012;
 
   return {
     pose: blend > 0.5 ? next : POSES[slot],
     x,
     y,
-    scale: 0.17 + Math.sin(tSeconds * 0.5) * 0.012,
-    rot: Math.sin(tSeconds * 0.4) * 0.12,
+    scale: 0.17 + Math.sin(t * 0.5) * 0.012,
+    rot: Math.sin(t * 0.4) * 0.12,
   };
 }

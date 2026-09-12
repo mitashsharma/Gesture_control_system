@@ -149,6 +149,8 @@ export class LiveEngine {
   private landmarker: AnyLandmarker | null = null;
 
   private raf = 0;
+  /** Bumped by every start()/stop() so a stale async tail never drives a loop. */
+  private gen = 0;
   private pending: Partial<LiveSnapshot> = {};
   private nextUi = 0;
   private lastInfer = 0;
@@ -189,6 +191,9 @@ export class LiveEngine {
 
   async start(source: LiveSourceId) {
     await this.stop(true);
+    // Captured AFTER stop(): stop() bumps the counter, and an overlapping
+    // start()/stop() must supersede this one, never the other way round.
+    const gen = ++this.gen;
     this.classifier.reset();
     liveLog.clear();
     this.frames = 0;
@@ -218,7 +223,9 @@ export class LiveEngine {
 
     try {
       await this.openSource(source);
+      if (gen !== this.gen) return; // superseded while awaiting the camera/model
       await this.loadBackend(source);
+      if (gen !== this.gen) return;
       systemStore.set({ live: true, loading: false });
       this.set({ status: 'running' });
       this.lastFrameAt = performance.now();
@@ -234,6 +241,7 @@ export class LiveEngine {
   }
 
   async stop(keepStore = false) {
+    this.gen++;
     if (this.raf) cancelAnimationFrame(this.raf);
     this.raf = 0;
     await this.teardownSource();

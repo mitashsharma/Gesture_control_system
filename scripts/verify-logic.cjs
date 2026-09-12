@@ -235,6 +235,18 @@ ok('measured extension ratios sit on the correct side of each window', () => {
   }
 });
 
+console.log('\n── live model: synthetic clock robustness ──');
+ok('cyclePose never yields an invalid pose, whatever the clock says', () => {
+  // Regression for the "Cannot read properties of undefined (reading 'curl')"
+  // crash: a frame stamped before the loop epoch indexed the pose table at -1.
+  for (const t of [-10, -0.001, 0, 1e-9, NaN, Infinity, -Infinity, 1e12]) {
+    const p = HM.cyclePose(t);
+    assert.ok(HM.POSES.includes(p.pose), `t=${t} → ${String(p.pose)}`);
+    HM.poseLandmarks(p, new Array(21)); // must not throw
+    assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.scale));
+  }
+});
+
 console.log('\n── live model: temporal layer ──');
 ok('hysteresis: a pose seen for less than holdMs is never reported', () => {
   const c = new GestureClassifier({ holdMs: 180 });
