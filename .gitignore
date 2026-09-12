@@ -13,6 +13,9 @@ coverage/
 # generated verification artifacts (regenerate via scripts/e2e.cjs)
 screenshots/
 
+# vendored MediaPipe runtime + weights (regenerate via `npm run vendor:model`)
+public/vendor/
+
 # os / editor / env
 .DS_Store
 *.log

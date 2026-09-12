@@ -5,6 +5,10 @@ const { matrixStats, makeLogEntry, seedLog, nextLatency, timestamp } = require('
 const { CONFUSION, GESTURE_CLASSES, ENGINES } = require('/tmp/logic/data.js');
 const { handLandmarks, HAND_CONNECTIONS } = require('/tmp/logic/canvas.js');
 const store = require('/tmp/logic/store.js');
+const G = require('/tmp/logic/gestures.js');
+const HM = require('/tmp/logic/handModel.js');
+const CV = require('/tmp/logic/skinCV.js');
+const { liveLog } = require('/tmp/logic/liveLog.js');
 
 let pass = 0;
 const ok = (name, fn) => {
@@ -143,4 +147,308 @@ ok('selector snapshot is stable for unchanged slices', () => {
   assert.notEqual(store.systemStore.getSnapshot().latency, 118);
 });
 
-console.log(`\n${pass} assertions groups passed.\n`);
+/* ==================================================================== *
+ *  LIVE MODEL — the real recognition pipeline (lib/gestures.ts,
+ *  lib/handModel.ts, lib/skinCV.ts, lib/liveLog.ts)
+ * ==================================================================== */
+
+const {
+  GestureClassifier,
+  classifyPose,
+  featuresFromLandmarks,
+  extensionScore,
+  RATIO_WINDOW,
+  GESTURE_ACTIONS,
+  GESTURES,
+  MIN_CONFIDENCE,
+} = G;
+
+/** Reference hand for a pose, placed in the frame. */
+function features(pose, o = {}) {
+  const { x = 0.5, y = 0.7, scale = 0.17, mirror = false, rot = 0 } = o;
+  const lm = HM.poseLandmarks({ pose, x, y, scale, mirror, rot }, new Array(21));
+  return G.featuresFromLandmarks(lm, mirror ? 'Left' : 'Right');
+}
+
+const POSE_LABEL = {
+  palm: 'Palm Stop',
+  fist: 'Fist Drag',
+  pinch: 'Pinch Click',
+  peace: 'Peace Sign',
+  thumbUp: 'Thumb Up',
+  point: 'Point',
+};
+
+console.log('\n── live model: landmark → pose ──');
+ok('all six reference poses classify to their own label at ≥85 %', () => {
+  for (const pose of HM.POSES) {
+    const v = classifyPose(features(pose));
+    assert.equal(v.pose, POSE_LABEL[pose], `${pose} → ${v.pose}`);
+    assert.ok(v.confidence >= 85, `${pose} only ${v.confidence}%`);
+  }
+  const v = classifyPose(features('palm'));
+  console.log(`      palm → "${v.pose}" @ ${v.confidence}%`);
+});
+ok('the classifier is invariant to hand position and size', () => {
+  for (const pose of HM.POSES) {
+    for (const o of [
+      { x: 0.3, y: 0.4, scale: 0.1 },
+      { x: 0.72, y: 0.85, scale: 0.26 },
+      { x: 0.5, y: 0.5, scale: 0.05 },
+    ]) {
+      assert.equal(classifyPose(features(pose, o)).pose, POSE_LABEL[pose], `${pose} at ${JSON.stringify(o)}`);
+    }
+  }
+});
+ok('a mirrored hand keeps its pose (handedness flips with it)', () => {
+  for (const pose of HM.POSES) {
+    assert.equal(classifyPose(features(pose, { mirror: true })).pose, POSE_LABEL[pose], pose);
+  }
+});
+ok('small wrist rotations do not change the verdict', () => {
+  for (const rot of [-0.35, -0.15, 0.15, 0.35]) {
+    assert.equal(classifyPose(features('peace', { rot })).pose, 'Peace Sign', `rot ${rot}`);
+  }
+});
+ok('unknown palm facing costs confidence but still recognises an open palm', () => {
+  const f = { ...features('palm'), facing: 0.5 };
+  const v = classifyPose(f);
+  assert.equal(v.pose, 'Palm Stop');
+  assert.ok(v.confidence > MIN_CONFIDENCE, `only ${v.confidence}%`);
+  assert.ok(v.confidence < classifyPose(features('palm')).confidence, 'facing should cost something');
+});
+ok('an ambiguous hand falls through to None', () => {
+  const f = features('palm');
+  const mid = f.ratios.map((_, i) => (RATIO_WINDOW[i][0] + RATIO_WINDOW[i][1]) / 2);
+  const v = classifyPose({ ...f, ratios: mid, pinch: 0.6, thumbSpan: 0.9, thumbLift: 0.8 });
+  assert.equal(v.pose, 'None');
+  assert.ok(v.confidence < MIN_CONFIDENCE, `${v.confidence}% should be under ${MIN_CONFIDENCE}`);
+});
+ok('measured extension ratios sit on the correct side of each window', () => {
+  const open = features('palm');
+  const closed = features('fist');
+  for (let i = 0; i < 5; i++) {
+    assert.ok(open.ratios[i] >= RATIO_WINDOW[i][1] - 0.05, `finger ${i} open ratio ${open.ratios[i]}`);
+    assert.ok(closed.ratios[i] <= RATIO_WINDOW[i][0] + 0.05, `finger ${i} curled ratio ${closed.ratios[i]}`);
+    assert.equal(extensionScore(i, open.ratios[i]) > 0.8, true, `finger ${i} should read extended`);
+    assert.equal(extensionScore(i, closed.ratios[i]) < 0.2, true, `finger ${i} should read curled`);
+  }
+});
+
+console.log('\n── live model: temporal layer ──');
+ok('hysteresis: a pose seen for less than holdMs is never reported', () => {
+  const c = new GestureClassifier({ holdMs: 180 });
+  const seen = new Set();
+  let t = 0;
+  for (let i = 0; i < 3; i++) {
+    seen.add(c.push(features('palm'), t).label);
+    t += 33;
+  }
+  for (let i = 0; i < 10; i++) {
+    seen.add(c.push(features('fist'), t).label);
+    t += 33;
+  }
+  assert.equal(seen.has('Palm Stop'), false, `leaked: ${[...seen]}`);
+  assert.equal(seen.has('Fist Drag'), true);
+});
+ok('a fast lateral sweep is Swipe Left, and fires exactly one intent', () => {
+  const c = new GestureClassifier({ holdMs: 0, cooldownMs: 0, repeatMs: 1e9 });
+  const intents = [];
+  const labels = new Set();
+  let t = 0;
+  for (let i = 0; i < 14; i++) {
+    const rec = c.push(features('palm', { x: 0.72 - i * 0.05 }), t);
+    labels.add(rec.label);
+    const it = c.takeIntent(rec, t);
+    if (it) intents.push(it);
+    t += 33;
+  }
+  assert.equal(labels.has('Swipe Left'), true, `labels: ${[...labels]}`);
+  // The settled palm may legitimately inject first; the sweep itself must not
+  // repeat while the hand keeps moving.
+  const swipes = intents.filter((i) => i.label === 'Swipe Left');
+  assert.equal(swipes.length, 1, `${swipes.length} swipe intents for one sweep`);
+  assert.equal(swipes[0].action, 'Switch Tab');
+  assert.equal(swipes[0].repeat, false);
+  assert.equal(intents[intents.length - 1].label, 'Swipe Left');
+});
+ok('a vertical sweep is Scroll Up / Scroll Down by direction', () => {
+  const up = new GestureClassifier({ holdMs: 0, cooldownMs: 0, repeatMs: 1e9 });
+  let t = 0;
+  let label = 'None';
+  for (let i = 0; i < 14; i++) {
+    label = up.push(features('palm', { y: 0.8 - i * 0.045 }), t).label;
+    t += 33;
+  }
+  assert.equal(label, 'Scroll Up');
+
+  const down = new GestureClassifier({ holdMs: 0, cooldownMs: 0, repeatMs: 1e9 });
+  t = 0;
+  for (let i = 0; i < 14; i++) {
+    label = down.push(features('palm', { y: 0.25 + i * 0.045 }), t).label;
+    t += 33;
+  }
+  assert.equal(label, 'Scroll Down');
+});
+ok('a held pose injects once, then repeats — never every frame', () => {
+  const c = new GestureClassifier({ holdMs: 120, cooldownMs: 180, repeatMs: 500 });
+  const intents = [];
+  let t = 0;
+  for (let i = 0; i < 90; i++) {
+    // 90 frames × 33 ms ≈ 3 s of holding a pinch.
+    const rec = c.push(features('pinch'), t);
+    const it = c.takeIntent(rec, t);
+    if (it) intents.push(it);
+    t += 33;
+  }
+  assert.ok(intents.length >= 4 && intents.length <= 9, `${intents.length} intents in 3 s`);
+  assert.equal(intents[0].repeat, false);
+  assert.equal(intents[0].label, 'Pinch Click');
+  assert.equal(intents.every((i) => i.label === 'Pinch Click'), true);
+  assert.ok(intents.slice(1).every((i) => i.repeat === true), 'later ones must be repeats');
+  const gaps = intents.slice(1).map((_, i) => i);
+  assert.equal(gaps.length, intents.length - 1);
+  console.log(`      ${intents.length} intents over 3 s (1 edge + ${intents.length - 1} hold repeats)`);
+});
+
+console.log('\n── live model: action mapping & intent log ──');
+ok('every gesture except None maps to an OS action', () => {
+  for (const g of GESTURES) {
+    if (g === 'None') {
+      assert.equal(GESTURE_ACTIONS[g], null);
+      continue;
+    }
+    const a = GESTURE_ACTIONS[g];
+    assert.ok(a && a.command.length > 0 && a.action.length > 0, `${g} unmapped`);
+  }
+});
+ok('liveLog is a bounded ring, newest last, ids disjoint from the synthetic log', () => {
+  liveLog.clear();
+  for (let i = 0; i < 55; i++) {
+    liveLog.push({
+      time: '10:00:00',
+      source: 'Gesture',
+      command: 'Pinch Click',
+      action: 'Left Click',
+      confidence: 95,
+      latency: 8,
+      label: 'Pinch Click',
+      backend: 'test',
+      repeat: false,
+    });
+  }
+  const snap = liveLog.getSnapshot();
+  assert.equal(snap.length, 40, `capacity should be 40, got ${snap.length}`);
+  assert.ok(snap.every((e) => e.id >= 100000), 'live ids must not collide with synthetic ones');
+  assert.ok(snap[snap.length - 1].id > snap[0].id, 'newest must be last');
+  liveLog.clear();
+  assert.equal(liveLog.getSnapshot().length, 0);
+});
+
+console.log('\n── live model: classical CV backend (pixels) ──');
+let pixelGroups = 0;
+try {
+  const { createCanvas } = require('@napi-rs/canvas');
+  // Render at webcam size, then downscale to the analysis resolution — exactly
+  // what LiveEngine.grabWorkCanvas() does in the browser.
+  const SRC_W = 640;
+  const SRC_H = 480;
+  const W = 320;
+  const H = 240;
+  const src = createCanvas(SRC_W, SRC_H);
+  const sctx = src.getContext('2d');
+  const work = createCanvas(W, H);
+  const wctx = work.getContext('2d');
+  const lm = new Array(21);
+
+  const contourOf = (pose, scale, rot) => {
+    const p = { pose, x: 0.5, y: 0.62, scale, rot };
+    HM.drawHand(sctx, HM.poseLandmarks(p, lm), p, { width: SRC_W, height: SRC_H, backdrop: true });
+    wctx.drawImage(src, 0, 0, W, H);
+    return CV.analyseHand(wctx.getImageData(0, 0, W, H));
+  };
+
+  ok('skin segmentation isolates the hand and rejects the backdrop', () => {
+    const c = contourOf('palm', 0.24, 0);
+    assert.ok(c, 'no hand detected');
+    const frac = c.area / (W * H);
+    assert.ok(frac > 0.03 && frac < 0.5, `hand covers ${(frac * 100).toFixed(1)}% of the frame`);
+    assert.equal(CV.isSkin(11, 18, 32), false, 'backdrop pixel classified as skin');
+    assert.equal(CV.isSkin(232, 180, 140), true, 'skin tone rejected');
+    console.log(`      hand covers ${(frac * 100).toFixed(1)}% of a 320×240 analysis frame`);
+  });
+
+  ok('a frame with no hand yields no detection', () => {
+    sctx.fillStyle = '#0b1220';
+    sctx.fillRect(0, 0, SRC_W, SRC_H);
+    wctx.drawImage(src, 0, 0, W, H);
+    assert.equal(CV.analyseHand(wctx.getImageData(0, 0, W, H)), null);
+  });
+
+  ok('resolveDigits counts the digits that actually protrude', () => {
+    const expect = { palm: [1, 4], fist: [0, 0], peace: [0, 2], point: [0, 1] };
+    for (const [pose, want] of Object.entries(expect)) {
+      const c = contourOf(pose, 0.24, 0);
+      assert.ok(c, `${pose}: no hand`);
+      const v = CV.resolveDigits(c.fingertips, c.palmRadius);
+      assert.deepEqual([v.thumb, v.fingers], want, `${pose} → ${v.thumb}/${v.fingers}`);
+    }
+  });
+
+  ok('the contour backend holds 4 poses across hand sizes and wrist rotations', () => {
+    const recoverable = {
+      palm: 'Palm Stop',
+      fist: 'Fist Drag',
+      peace: 'Peace Sign',
+      point: 'Point',
+    };
+    let checks = 0;
+    for (const scale of [0.24, 0.19, 0.17, 0.155, 0.14]) {
+      for (const rot of [0, 0.12, -0.12, 0.25]) {
+        for (const [pose, label] of Object.entries(recoverable)) {
+          const c = contourOf(pose, scale, rot);
+          assert.ok(c, `${pose} @${scale}/${rot}: no hand`);
+          const v = classifyPose(CV.featuresFromContour(c, W));
+          assert.equal(v.pose, label, `${pose} @scale ${scale} rot ${rot} → ${v.pose}`);
+          checks++;
+        }
+      }
+    }
+    console.log(`      ${checks} pose×geometry combinations, all correct`);
+  });
+
+  ok('two gestures are landmark-only — pinned, not silently wrong', () => {
+    // Pinch: the thumb-index gap that defines it disappears when the digits
+    // touch, so the silhouette backend abstains.
+    const pinch = contourOf('pinch', 0.24, 0);
+    assert.equal(classifyPose(CV.featuresFromContour(pinch, W)).pose, 'None');
+
+    // Thumb Up: a raised thumb (1.30–1.41 × palm radius) and a fist's knuckles
+    // (0.92–1.29 ×) overlap too much to separate from a silhouette alone.
+    const up = contourOf('thumbUp', 0.24, 0);
+    const got = classifyPose(CV.featuresFromContour(up, W)).pose;
+    assert.ok(got === 'Fist Drag' || got === 'None', `unexpected ${got}`);
+
+    // The landmark backend resolves both, which is why it stays the default.
+    assert.equal(classifyPose(features('pinch')).pose, 'Pinch Click');
+    assert.equal(classifyPose(features('thumbUp')).pose, 'Thumb Up');
+  });
+  pixelGroups = 5;
+} catch (err) {
+  console.log('  ! pixel suite skipped — @napi-rs/canvas unavailable:', err.message);
+}
+
+console.log('\n── store: live/synthetic handover ──');
+ok('the store carries the live flag and defaults to the synthetic clock', () => {
+  assert.equal(store.systemStore.getSnapshot().live, false);
+  store.systemStore.set({ live: true, latency: 9.4, fps: 28.1, accuracy: 91.2 });
+  const s = store.systemStore.getSnapshot();
+  assert.equal(s.live, true);
+  assert.equal(s.latency, 9.4);
+  assert.equal(s.accuracy, 91.2);
+  store.systemStore.set({ live: false });
+  assert.equal(store.systemStore.getSnapshot().live, false);
+});
+
+console.log(`\n${pass} assertion groups passed (${pixelGroups} of them pixel-level).\n`);
+

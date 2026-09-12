@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useInView, useLiveInterval } from '@/lib/hooks';
+import { useLiveLog } from '@/lib/liveLog';
 import { makeLogEntry, seedLog, type InputSource, type LogEntry } from '@/lib/simulation';
 import { useSystem } from '@/lib/store';
 import { Chip, GlassCard, LiveDot, SectionHeading } from './ui';
@@ -32,6 +33,8 @@ const FILTERS: { id: Filter; label: string }[] = [
 export function LogTerminal() {
   const mode = useSystem((s) => s.mode);
   const running = useSystem((s) => s.running);
+  const live = useSystem((s) => s.live);
+  const liveEntries = useLiveLog();
   const { ref: viewRef, inView } = useInView<HTMLDivElement>('80px');
 
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -58,12 +61,23 @@ export function LogTerminal() {
       });
     },
     SPAWN_MS,
-    running && streaming && inView && logs.length > 0,
+    // Synthetic traffic stands down while the live model is producing real
+    // intents — the stream must never mix the two for the same second.
+    running && streaming && inView && logs.length > 0 && !live,
+  );
+
+  /** Synthetic entries + whatever the live recogniser has actually emitted. */
+  const all = useMemo(
+    () =>
+      liveEntries.length
+        ? [...logs, ...liveEntries].sort((a, b) => a.id - b.id)
+        : logs,
+    [logs, liveEntries],
   );
 
   const filtered = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
-    return logs.filter((l) => {
+    return all.filter((l) => {
       if (filter !== 'all' && l.source !== filter) return false;
       if (!q) return true;
       return (
@@ -72,15 +86,13 @@ export function LogTerminal() {
         l.time.includes(q)
       );
     });
-  }, [logs, filter, deferredQuery]);
+  }, [all, filter, deferredQuery]);
 
   const stats = useMemo(() => {
-    const gesture = logs.filter((l) => l.source === 'Gesture').length;
-    const avg = logs.length
-      ? logs.reduce((a, l) => a + l.confidence, 0) / logs.length
-      : 0;
-    return { total: logs.length, gesture, voice: logs.length - gesture, avg };
-  }, [logs]);
+    const gesture = all.filter((l) => l.source === 'Gesture').length;
+    const avg = all.length ? all.reduce((a, l) => a + l.confidence, 0) / all.length : 0;
+    return { total: all.length, gesture, voice: all.length - gesture, avg };
+  }, [all]);
 
   // Stick to the bottom, but only if the user is already there.
   useEffect(() => {
@@ -194,7 +206,7 @@ export function LogTerminal() {
                 <div>
                   <TerminalSquare className="mx-auto h-6 w-6 text-slate-300" />
                   <p className="mt-2 text-[11.5px] text-ink-mute">
-                    {logs.length === 0
+                    {all.length === 0
                       ? 'Awaiting first intent from the recognition loop…'
                       : 'No events match the current filter.'}
                   </p>
@@ -222,6 +234,10 @@ export function LogTerminal() {
               {stats.voice} voice
             </Chip>
             <Chip tone="emerald">avg confidence {stats.avg.toFixed(2)}%</Chip>
+            <Chip tone={live ? 'cyan' : 'neutral'}>
+              <LiveDot tone={live ? 'cyan' : 'amber'} />
+              {liveEntries.length} from the live model
+            </Chip>
             <span className="ml-auto font-mono text-[10px] text-ink-mute">
               ring buffer capped at {MAX_ENTRIES} entries
             </span>

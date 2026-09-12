@@ -24,6 +24,7 @@ export function SimulationEngine() {
   const streak = useRef(0);
   const seeded = useRef(false);
   const running = useSystem((s) => s.running);
+  const live = useSystem((s) => s.live);
 
   useEffect(() => {
     if (seeded.current) return;
@@ -71,7 +72,9 @@ export function SimulationEngine() {
       systemStore.set({ latency, jitter, fps, accuracy });
     },
     TICK_MS,
-    running,
+    // The live model publishes real measurements while it runs; the synthetic
+    // walk must not fight it for the same store fields.
+    running && !live,
   );
 
   return null;

@@ -39,6 +39,12 @@ export interface SystemState {
   motion: MotionLevel;
   /** Global simulation master switch — pauses every timer/rAF loop. */
   running: boolean;
+  /**
+   * True while the LIVE model (lib/liveEngine.ts) owns the telemetry. The
+   * synthetic clock stands down so the dashboard never shows two sets of
+   * numbers for the same thing.
+   */
+  live: boolean;
 }
 
 const THRESHOLD = 150; // ms — latency budget before the watchdog intervenes
@@ -55,6 +61,7 @@ const initialState: SystemState = {
   alert: null,
   motion: 'full',
   running: true,
+  live: false,
 };
 
 let state: SystemState = initialState;

@@ -2,6 +2,7 @@ import { Analytics } from '@/components/Analytics';
 import { Footer } from '@/components/Footer';
 import { GestureDemo } from '@/components/GestureDemo';
 import { Hero } from '@/components/Hero';
+import { LiveModel } from '@/components/LiveModel';
 import { LogTerminal } from '@/components/LogTerminal';
 import { Nav } from '@/components/Nav';
 import { PerfGuard } from '@/components/PerfGuard';
@@ -17,6 +18,7 @@ export default function Page() {
         <Hero />
         <Analytics />
         <Pipeline />
+        <LiveModel />
         <LogTerminal />
         <GestureDemo />
         <Team />

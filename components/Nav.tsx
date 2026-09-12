@@ -1,7 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Activity, Hand, Menu, ShieldCheck, TerminalSquare, X } from 'lucide-react';
+import { Activity, Hand, Menu, Radar, ShieldCheck, TerminalSquare, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useScrollToSection, useScrolledPast } from '@/lib/hooks';
 import { cn } from '@/lib/cn';
@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn';
 const LINKS = [
   { id: 'overview', label: 'Overview', icon: Hand },
   { id: 'analytics', label: 'Model Analytics', icon: Activity },
+  { id: 'live', label: 'Live Model', icon: Radar },
   { id: 'logs', label: 'Live Logs', icon: TerminalSquare },
   { id: 'demo', label: 'Gesture Demo', icon: Hand },
   { id: 'team', label: 'Team', icon: ShieldCheck },
