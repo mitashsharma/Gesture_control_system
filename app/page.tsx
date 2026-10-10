@@ -7,8 +7,6 @@ import { LogTerminal } from '@/components/LogTerminal';
 import { Nav } from '@/components/Nav';
 import { PerfGuard } from '@/components/PerfGuard';
 import { Pipeline } from '@/components/Pipeline';
-import { StatusPanel } from '@/components/StatusPanel';
-import { Team } from '@/components/Team';
 
 export default function Page() {
   return (
@@ -21,8 +19,6 @@ export default function Page() {
         <LiveModel />
         <LogTerminal />
         <GestureDemo />
-        <Team />
-        <StatusPanel />
         <PerfGuard />
       </main>
       <Footer />

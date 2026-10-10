@@ -12,7 +12,6 @@ const LINKS = [
   { id: 'live', label: 'Live Model', icon: Radar },
   { id: 'logs', label: 'Live Logs', icon: TerminalSquare },
   { id: 'demo', label: 'Gesture Demo', icon: Hand },
-  { id: 'team', label: 'Team', icon: ShieldCheck },
   { id: 'status', label: 'Status', icon: ShieldCheck },
 ] as const;
 
